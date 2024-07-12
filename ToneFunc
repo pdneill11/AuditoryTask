@@ -1,0 +1,52 @@
+void setup() {
+  
+  unsigned long startTime;
+  unsigned long responseTime;
+  bool inputReceived = false;
+
+  // Define pin number for the speaker and lick-port inputs
+  const int speakerPin = 25; //Output pin associated with speaker
+  analogRead(A10) = lickleftPin; //Input pin associated with lick left
+  analogRead(A11) = lickrightPin; //Input pin associated with lick right
+
+  // Define frequencies and duration for the test tones
+  const int ToneArray[1] = {3000, 12000}; // Frequencies of "test-tones" (3kHz, 12kHz)
+  const int toneDuration = 2000; // Duration of the "test-tones" in milliseconds (2s)
+
+  const int goTone = 6000; //Frequency of "go-tone" (6kHz)
+  const int goDuration = 500; // Duration of the "go-tone" (500ms)
+
+  const int delayDuration = 1000; // Duration of time between "test-tone" and "go-tone" (1s)
+
+}
+
+void loop() {
+  
+  // Play a random "test-tone"
+  ToneArray[random(1)] = toneFreq
+  tone(speakerPin, toneFreq, toneDuration);
+
+  // Wait 1 second before playing "go-tone"
+  unsigned long beginDelay = millis();
+
+  while (millis() - startTime < 1000) {
+    if (analogRead(lickleftPin,lickrightPin) > 100) { //Find appropriate threshold once connected to preamplifier
+      inputReceived = true;
+      break;
+    }
+  }
+  
+  if (inputReceived) {
+    Serial.println("False start!");
+    inputReceived = false; // Reset the flag
+    delay(5000);
+    }
+    
+  go_tone(speakerPin, goFreq, goDuration)
+  startTime = millis();
+  if
+
+
+  responseTime = (millis()-startTime)
+}
+
