@@ -1,22 +1,24 @@
 % Define the digital input, digital output, and analog output channels
 lickleftPin = 'Port0/Line0';    % Specify the digital input pin for left lick port
 lickrightPin = 'Port0/Line1';   % Specify the digital input pin for right lick port
-
 dispenseleftPin = 'Port0/Line2';  % Specify the digital output pin for dispense left
 dispenserightPin = 'Port0/Line3'; % Specify the digital output pin for dispense right
-
 speakerPin = 'ao0';             % Specify the analog output channel for the speaker
 
 % Define parameters
 dispenseDuration = 1; % Dispense duration in seconds
 responseTime = 3; % Allowed response time in seconds
-numTrials = 500; % Set number of total trials
-trialDelay = 3; % Delay between trials in seconds
+numTrials = 400; % Set number of total trials
+trialDelayRange = [0.5, 2]; % Trial delay between 500 and 2000ms
+lockoutDurationRange = [4, 6]; % Lockout duration between 4000 and 6000ms
+cutOffFrequency = 16000; % Cutoff frequency for correct response (left or right)
 
 % Define tone frequencies and duration
-leftToneFreq = 3000;   % Frequency in Hz for the left tone (e.g., 3 kHz)
-rightToneFreq = 12000; % Frequency in Hz for the right tone (e.g., 12 kHz)
-toneDuration = 1;    % Duration in seconds
+leftToneFreq = 8000;   % Frequency in Hz for the left tone (e.g., 8 kHz)
+rightToneFreq = 32000; % Frequency in Hz for the right tone (e.g., 32 kHz)
+toneDuration = 0.3;    % Duration in seconds
+leftAmplitude = 1;   % Adjusts volume of left tone
+rightAmplitude = 1;  % Adjusts volume of right tone
 
 % Create DataAcquisition objects
 daqObjClocked = daq('ni');
@@ -37,41 +39,64 @@ daqObjClocked.Rate = 10000;
 % Generate time vector
 time = linspace(0, toneDuration, daqObjClocked.Rate * toneDuration)';
 
-% Generate the output signals for both tones (left and right)
-leftToneSignal = sin(2 * pi * leftToneFreq * time);
-rightToneSignal = sin(2 * pi * rightToneFreq * time);
+% Preallocate response matrix: Columns -> 
+% [Correct, Incorrect, No Response, Response Time, Trial Type (0=Train, 1=Test),
+%  Tone Frequency, Trial Delay, Lockout Duration, Lockout Violations, Absolute Time]
+responseMatrix = nan(numTrials, 10);  % Initialize with NaN values
 
-% Preallocate response matrix: Columns -> [Correct, Incorrect, No Response, Response Time]
-responseMatrix = nan(numTrials, 4); % Initialize with NaN values
+% Define labels for the responseMatrix columns
+responseMatrixLabels = {
+    'Correct Response', ...
+    'Incorrect Response', ...
+    'No Response', ...
+    'Response Time (s)', ...
+    'Trial Type (0 = Train, 1 = Test)', ...
+    'Tone Frequency (Hz)', ...
+    'Trial Delay (s)', ...
+    'Lockout Duration (s)', ...
+    'Lockout Violations', ...
+    'Absolute Time (s)'  % Added label for absolute time
+};
 
-completedTrials = 0; % Initialize the counter for completed trials
+completedTrials = 0;  % Initialize the counter for completed trials
 
+% Main trial loop
 for trial = 1:numTrials
     disp(['Trial ', num2str(trial), ' of ', num2str(numTrials)]);
     
-    % Randomly select between left and right tone
-    if rand > 0.5
-        toneSignal = leftToneSignal;
-        expectedPin = 1;  % Index for left lick pin
-        unexpectedPin = 2;
+    % Randomly select between leftToneFreq and rightToneFreq with equal probability
+    if rand <= 0.5
+        toneFreq = leftToneFreq;
+        responseMatrix(trial, 5) = 0; % Mark as train trial
+        correctPin = 1; % 1 corresponds to lickleftPin
+        dispensePin = dispenseleftPin; % Activate dispenseleftPin
         disp('Playing left tone...');
     else
-        toneSignal = rightToneSignal;
-        expectedPin = 2;  % Index for right lick pin
-        unexpectedPin = 1;
+        toneFreq = rightToneFreq;
+        responseMatrix(trial, 5) = 0; % Mark as train trial
+        correctPin = 2; % 2 corresponds to lickrightPin
+        dispensePin = dispenserightPin; % Activate dispenserightPin
         disp('Playing right tone...');
     end
-
+    
+    % Generate the tone signal
+    toneSignal = sin(2 * pi * toneFreq * time);
+    
     % Output the tone to the speaker
     preload(daqObjClocked, toneSignal);
+    
+    % Capture the system time at the onset of the tone
+    onsetTime = datetime('now');
+    
     start(daqObjClocked);
     disp('Tone played');
     
     % Wait for the tone duration to elapse
     pause(toneDuration);
-    
-    % Stop the clocked DataAcquisition object
     stop(daqObjClocked);
+    
+    % Convert datetime to seconds since the experiment started
+    absoluteTime = seconds(onsetTime - datetime('today'));
     
     % Record the start time of the response period
     responseStartTime = tic;
@@ -79,75 +104,54 @@ for trial = 1:numTrials
     % Initialize response tracking
     responseDetected = false;
     incorrectResponse = false;
-    responseTime = NaN;
-
-    % Allow time responseTime for a response
-    startTime = tic;
+    lockoutViolations = 0;  % Initialize lockout violation counter
     
+    % Randomize trial delay and lockout duration for this trial
+    trialDelay = rand * diff(trialDelayRange) + trialDelayRange(1);
+    lockoutDuration = rand * diff(lockoutDurationRange) + lockoutDurationRange(1);
+    
+    % Allow up to responseTime for a response
+    startTime = tic;
     while toc(startTime) < responseTime
         % Read the current state of digital inputs
         inputVals = read(daqObjDemand, "OutputFormat", "Matrix");
         
-        % Check if the correct input was activated
-        if inputVals(1, expectedPin) == 1
+        % Check if the correct pin was activated
+        if inputVals(1, correctPin) == 1
             responseDetected = true;
-            responseTime = toc(responseStartTime);  % Record response time
-            disp('Correct response detected! Triggering output...');
+            responseTimeElapsed = toc(responseStartTime);  % Record response time
             
-            % Set the correct digital output high for dispenseDuration
-            if expectedPin == 1 
-                write(daqObjDemand, [1, 0]);
+            % Dispense reward for correct response
+            disp('Correct response detected! Triggering output...');
+            if correctPin == 1
+                write(daqObjDemand, [1, 0]); % Activate dispenseleftPin
             else
-                write(daqObjDemand, [0, 1]);
+                write(daqObjDemand, [0, 1]); % Activate dispenserightPin
             end
-
-            % Deactivate both output pins after the response duration
             pause(dispenseDuration);
-            write(daqObjDemand, [0, 0]);
-            disp('Output deactivated.');
+            write(daqObjDemand, [0, 0]);  % Turn off all dispensers
             
             % Record the correct response
-            responseMatrix(trial, :) = [1, 0, 0, responseTime];
-            completedTrials = completedTrials + 1;
-            break;
-        elseif inputVals(1, unexpectedPin) == 1  % The incorrect input was activated
-            incorrectResponse = true;
-            responseTime = toc(responseStartTime);  % Record response time
-            disp('Incorrect response detected! Triggering output...');
-
-            % Set the incorrect digital output high for dispenseDuration
-            if expectedPin == 1 
-                write(daqObjDemand, [0, 1]);
-            else
-                write(daqObjDemand, [1, 0]);
-            end
-
-            % Deactivate both output pins after the response duration
-            pause(dispenseDuration);
-            write(daqObjDemand, [0, 0]);
-            disp('Output deactivated.');
-
-            responseMatrix(trial, :) = [0, 1, 0, responseTime];  % Record incorrect response
+            responseMatrix(trial, :) = [1, 0, 0, responseTimeElapsed, responseMatrix(trial, 5), toneFreq, trialDelay, lockoutDuration, lockoutViolations, absoluteTime];
             completedTrials = completedTrials + 1;
             break;
         end
     end
     
-    % If no response or incorrect response was detected within responseTime
-    if ~responseDetected && ~incorrectResponse
+    % If no response is detected within responseTime
+    if ~responseDetected
         disp('No response detected within the allowed time.');
-        responseMatrix(trial, :) = [0, 0, 1, NaN];  % Record no response
-    elseif incorrectResponse
-        % Enter lockout period
-        pause(lockoutDuration);
-        disp('Lockout period ended.');
+        responseMatrix(trial, :) = [0, 0, 1, NaN, responseMatrix(trial, 5), toneFreq, trialDelay, lockoutDuration, lockoutViolations, absoluteTime];
     end
     
-    pause(trialDelay); % Pause before the next trial
+    % Pause for randomized trial delay
+    pause(trialDelay);
 end
 
 % Trim the response matrix to include only completed trials
 responseMatrix = responseMatrix(1:completedTrials, :);
 
-% Display the final response matrix
+% Display the final response matrix and labels
 disp('All trials finished');
+disp(responseMatrixLabels);
+disp(responseMatrix);
