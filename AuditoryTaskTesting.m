@@ -1,4 +1,6 @@
 % Define the digital input, digital output, and analog output channels
+device = 'Dev4'; %Specify location of DAQ device
+
 lickleftPin = 'Port0/Line0';    % Specify the digital input pin for left lick port
 lickrightPin = 'Port0/Line1';   % Specify the digital input pin for right lick port
 dispenseleftPin = 'Port0/Line2';  % Specify the digital output pin for dispense left
@@ -19,26 +21,29 @@ rightToneFreq = 32000; % Frequency in Hz for the right tone (e.g., 32 kHz)
 toneDuration = 0.3;    % Duration in seconds
 leftAmplitude = 1;   % Adjusts volume of left tone
 rightAmplitude = 1;  % Adjusts volume of right tone
-testFrequencies = [11.3, 13, 14.9, 17.1, 19.7, 22.6] * 1000;  % Test frequencies in Hz
-testTrialProbability = 0.3;  % 30% of trials are test trials
+%testFrequencies = [11.3, 13, 14.9, 17.1, 19.7, 22.6] * 1000;  % Test frequencies in Hz
+%testTrialProbability = 0.3;  % 30% of trials are test trials
+testFrequencies = [8, 32] * 1000;  % Test frequencies in Hz
+testTrialProbability = 1;
 
 % Create two DataAcquisition objects
 daqObjClocked = daq('ni'); % For clocked operations (tone generation)
-daqObjDemand = daq('ni');  % For on-demand operations (digital IO)
-
-% Add digital input channels for lick ports to the on-demand object
-addinput(daqObjDemand, 'Dev1', lickleftPin, 'Digital');
-addinput(daqObjDemand, 'Dev1', lickrightPin, 'Digital');
-
-% Add digital output channels for left and right dispensers to the on-demand object
-addoutput(daqObjDemand, 'Dev1', dispenseleftPin, 'Digital');
-addoutput(daqObjDemand, 'Dev1', dispenserightPin, 'Digital');
+daqObjInput = daq('ni');  % For on-demand operations (digital I)
+daqObjOutput = daq('ni');  % For on-demand operations (digital O)
 
 % Add analog output channel for the speaker to the clocked object
-addoutput(daqObjClocked, 'Dev1', speakerPin, 'Voltage');
+addoutput(daqObjClocked, device, speakerPin, 'Voltage');
+
+% Add digital input channels for lick ports to the on-demand object
+addinput(daqObjInput, device, lickleftPin, 'Digital');
+addinput(daqObjInput, device, lickrightPin, 'Digital');
+
+% Add digital output channels for left and right dispensers to the on-demand object
+addoutput(daqObjOutput, device, dispenseleftPin, 'Digital');
+addoutput(daqObjOutput, device, dispenserightPin, 'Digital');
 
 % Set the clocked rate for the tone generation
-daqObjClocked.Rate = 10000;
+daqObjClocked.Rate = 40000;
 
 % Generate time vector for the tones
 time = linspace(0, toneDuration, daqObjClocked.Rate * toneDuration)';
@@ -81,7 +86,7 @@ for trial = 1:numTrials
     end
     
     % Generate the tone signal
-    toneSignal = sin(2 * pi * toneFreq * time);
+    toneSignal = sin(2 * pi * 2000 * time);
 
     % Determine correct pin based on tone frequency
     if toneFreq < cutOffFrequency
@@ -96,20 +101,20 @@ for trial = 1:numTrials
     preload(daqObjClocked, toneSignal);
     start(daqObjClocked);
     disp('Tone played');
-    
-    % Wait for the tone duration to elapse
-    pause(toneDuration);
-    stop(daqObjClocked);
-    
+
     % Capture the system time at the onset of the tone
     onsetTime = datetime('now');
     absoluteTime = seconds(onsetTime - datetime('today'));
 
+    % Wait for the tone duration to elapse
+    pause(toneDuration);
+    stop(daqObjClocked);
+    
     % Start response period
     responseStartTime = tic;
     
     % Initialize response tracking
-    responseDetected = false;
+    correctResponse = false;
     incorrectResponse = false;
     lockoutViolations = 0;
 
@@ -119,60 +124,51 @@ for trial = 1:numTrials
 
     % Allow time responseTime for a response
     while toc(responseStartTime) < responseTime
+        
         % Read the current state of digital inputs
-        inputVals = read(daqObjDemand, "OutputFormat", "Matrix");
+        inputVals = read(daqObjInput, "OutputFormat", "Matrix");
 
-        % Check for correct or incorrect response
-        if inputVals(1, expectedPin) == 1
-            responseDetected = true;
-            responseTime = toc(responseStartTime);
+        % Check for response
+        if inputVals(expectedPin) == 1
+            correctResponse = true;
+            responseEndTime = toc(responseStartTime);
             
             % Dispense reward for correct response
             if expectedPin == 1
-                write(daqObjDemand, [1, 0]);
+                write(daqObjOutput, [1, 0]);
+                pause(dispenseDuration);
+                write(daqObjOutput, [0, 0]);
+                pause(0.1);
             else
-                write(daqObjDemand, [0, 1]);
+                write(daqObjOutput, [0, 1]);
+                pause(dispenseDuration);
+                write(daqObjOutput, [0, 0]);
+                pause(0.1);
             end
-            pause(dispenseDuration);
-            write(daqObjDemand, [0, 0]);
 
             % Record correct response
-            responseMatrix(trial, :) = [1, 0, 0, responseTime, responseMatrix(trial, 5), toneFreq, trialDelay, lockoutDuration, lockoutViolations, absoluteTime];
+            responseMatrix(trial, :) = [1, 0, 0, responseEndTime, responseMatrix(trial, 5), toneFreq, trialDelay, lockoutDuration, lockoutViolations, absoluteTime];
             completedTrials = completedTrials + 1;
             break;
-        elseif inputVals(1, unexpectedPin) == 1
+        
+        elseif inputVals(unexpectedPin) == 1
+            
+            %Begin lockout period for incorrect response
             incorrectResponse = true;
-            responseTime = toc(responseStartTime);
+            responseEndTime = toc(responseStartTime);
             lockoutViolations = lockoutViolations + 1;
-
-            % Dispense penalty for incorrect response
-            if expectedPin == 1
-                write(daqObjDemand, [0, 1]);
-            else
-                write(daqObjDemand, [1, 0]);
-            end
-            pause(dispenseDuration);
-            write(daqObjDemand, [0, 0]);
-
-            % Start lockout period
-            lockoutStartTime = tic;
-            while toc(lockoutStartTime) < lockoutDuration
-                inputVals = read(daqObjDemand, "OutputFormat", "Matrix");
-                if inputVals(1, unexpectedPin) == 1
-                    lockoutStartTime = tic;
-                    lockoutViolations = lockoutViolations + 1;
-                end
-            end
+            pause(lockoutDuration);
 
             % Record incorrect response
-            responseMatrix(trial, :) = [0, 1, 0, responseTime, responseMatrix(trial, 5), toneFreq, trialDelay, lockoutDuration, lockoutViolations, absoluteTime];
+            responseMatrix(trial, :) = [0, 1, 0, responseEndTime, responseMatrix(trial, 5), toneFreq, trialDelay, lockoutDuration, lockoutViolations, absoluteTime];
             completedTrials = completedTrials + 1;
             break;
         end
     end
-
+    
     % No response
-    if ~responseDetected && ~incorrectResponse
+    if ~correctResponse && ~incorrectResponse
+        disp('NO RESPONSE!')
         responseMatrix(trial, :) = [0, 0, 1, NaN, responseMatrix(trial, 5), toneFreq, trialDelay, lockoutDuration, lockoutViolations, absoluteTime];
     end
     
