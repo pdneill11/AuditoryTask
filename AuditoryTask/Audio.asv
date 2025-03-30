@@ -1,0 +1,22 @@
+% NI-DAQ Configuration
+device = 'Dev4';  % Change to your actual NIDAQ device name
+aoChannel = 'ao0'; % Analog output channel (adjust if needed)
+
+fs = 250000;   % Sampling rate (Hz)
+duration = 2;  % Tone duration (seconds)
+f = 10;      % Frequency of sine wave (Hz)
+amplitude = 1;
+
+t = 0:1/fs:duration;   % Time vector
+y = amplitude * sin(2 * pi * f * t);  % Generate sine wave at full range (+/-10V)
+
+% Create NI-DAQ Analog Output Object
+dq = daq("ni");
+addoutput(dq, device, aoChannel, "Voltage");
+
+
+write(dq, y(startIdx:endIdx)'); % Transmit data in small chunks
+
+% Cleanup
+release(dq);
+disp('Tone playback complete.');
