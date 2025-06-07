@@ -1,11 +1,12 @@
-Date = "04192025"
-fileLocation = "Z:\pdneill\MATLAB Code\AuditoryTask\Data\";
-fileName = Date + "_Train_VoltageSignal.tdms"
+Animal = "M1"
+Date = "05_21_2025"
+Session = "1"
+
+fileLocation = "Z:\pdneill\MATLAB Code\AuditoryTask\Data\"+Animal+"\";
+fileName = fileLocation + Date +"_"+ Session + "_" + "_Train_VoltageSignal.tdms"
 
 %Initialize and begin recording voltage data
 disp("Starting acquisition...");
-allData = [];
-allTimestamps = [];
 daqLickSample.LogToDisk = true;
 daqLickSample.LogFileName = fileName;
 start(daqLickSample, "Continuous");
@@ -121,7 +122,6 @@ for trial = 1:numTrials
 end
 
 stop(daqLickSample);
-%daqLickSample.LogToDisk;
 
 % Trim response matrix
 responseMatrix = responseMatrix(1:completedTrials, :);
